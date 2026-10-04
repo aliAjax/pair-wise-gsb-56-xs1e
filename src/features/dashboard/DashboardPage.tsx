@@ -186,6 +186,19 @@ export function DashboardPage() {
                 审批完成后才允许扣减许可额度，超额度或额度不足时拒绝执行。
               </p>
             </div>
+            <div>
+              <strong>联合许可批次</strong>
+              <p className="muted">
+                {data.batches.filter((item) => item.status !== 'licensed').length
+                  ? `${
+                      data.batches.filter((item) => item.status !== 'licensed').length
+                    } 个活动批次统一预占额度，换版即整批转待复核。`
+                  : '同一收件方的多份资料包可建批统一预占、统一核销。'}
+                <Button type="link" size="small" onClick={() => navigate('/license-batches')}>
+                  管理批次
+                </Button>
+              </p>
+            </div>
           </Space>
         </section>
       </div>

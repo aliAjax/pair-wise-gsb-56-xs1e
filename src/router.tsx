@@ -6,6 +6,7 @@ import { PackageEditorPage } from '@/features/packages/PackageEditorPage'
 import { PageReviewPage } from '@/features/review/PageReviewPage'
 import { ApprovalPage } from '@/features/approval/ApprovalPage'
 import { LicensePage } from '@/features/license/LicensePage'
+import { LicenseBatchPage } from '@/features/license/LicenseBatchPage'
 import { VersionDiffPage } from '@/features/versions/VersionDiffPage'
 import { AuditPage } from '@/features/audit/AuditPage'
 
@@ -20,6 +21,7 @@ export const router = createBrowserRouter([
       { path: 'page-review', element: <PageReviewPage /> },
       { path: 'approvals', element: <ApprovalPage /> },
       { path: 'licenses', element: <LicensePage /> },
+      { path: 'license-batches', element: <LicenseBatchPage /> },
       { path: 'versions', element: <VersionDiffPage /> },
       { path: 'audit', element: <AuditPage /> },
       { path: '*', element: <Navigate to="/" replace /> },

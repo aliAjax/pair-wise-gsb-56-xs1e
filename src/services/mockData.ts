@@ -1,5 +1,6 @@
 import type {
   FileVersion,
+  LicenseBatch,
   LicenseRule,
   MaterialFile,
   MaterialPackage,
@@ -7,6 +8,7 @@ import type {
   WorkspaceState,
 } from '@/types/domain'
 import { createApprovalRoute, validatePackage } from './rules'
+import { batchFingerprints, makeBatchIdempotencyKey } from './batch'
 
 function pages(
   count: number,
@@ -116,6 +118,8 @@ const sw1 = version('V2.0', 5, true, '7EA2-319F', '标准控制器软件包')
 const sw2 = version('V2.1', 6, true, '52CC-8D10', '修复通信模块并更新校验文件')
 const us1 = version('V3.2', 12, false, 'E11A-77B4', '光刻设备参数说明', { controlled: true })
 const my1 = version('V1.0', 4, false, '88AB-3411', '厂房布置示意')
+const sg2 = version('V1.0', 6, true, 'C7B1-55E0', '固化炉温循记录')
+const sg3 = version('V1.0', 5, false, 'F2D8-09AC', '模具装配检验图册')
 
 export function createInitialState(): WorkspaceState {
   const now = '2026-09-28T06:00:00.000Z'
@@ -222,6 +226,55 @@ export function createInitialState(): WorkspaceState {
       updatedAt: now,
       versions: [],
     },
+    {
+      id: 'pkg-005',
+      code: 'EC-2026-005',
+      title: '复材固化炉工艺窗口数据包',
+      category: 'technical',
+      applicant: '周明',
+      recipient: 'Asia Aero Manufacturing Pte. Ltd.',
+      destination: '新加坡',
+      endUse: '民用航空结构件试制',
+      technologyTags: ['复合材料', '工艺参数'],
+      personnelScopes: ['第三方承包商'],
+      declarations: ['最终用户声明', '最终用途声明', '不扩散声明'],
+      status: 'approved',
+      matchedRuleId: 'rule-sg-composite',
+      approvalRoute: createApprovalRoute('enhanced').map((step) => ({
+        ...step,
+        status: 'approved' as const,
+        comment: '工艺窗口数据与声明一致。',
+        decidedAt: '2026-09-27T09:10:00.000Z',
+      })),
+      currentRound: 1,
+      quotaUsed: 12,
+      quotaLimit: 80,
+      createdAt: '2026-09-22T03:40:00.000Z',
+      updatedAt: '2026-09-27T09:10:00.000Z',
+      versions: [],
+    },
+    {
+      id: 'pkg-006',
+      code: 'EC-2026-006',
+      title: '机翼模具装配检验图册',
+      category: 'drawing',
+      applicant: '周明',
+      recipient: 'Asia Aero Manufacturing Pte. Ltd.',
+      destination: '新加坡',
+      endUse: '民用航空结构件试制',
+      technologyTags: ['复合材料'],
+      personnelScopes: ['第三方承包商'],
+      declarations: ['最终用户声明', '最终用途声明', '不扩散声明'],
+      status: 'reviewing',
+      matchedRuleId: 'rule-sg-composite',
+      approvalRoute: createApprovalRoute('enhanced'),
+      currentRound: 1,
+      quotaUsed: 0,
+      quotaLimit: 80,
+      createdAt: '2026-09-25T01:30:00.000Z',
+      updatedAt: now,
+      versions: [],
+    },
   ]
 
   const files: MaterialFile[] = [
@@ -269,6 +322,24 @@ export function createInitialState(): WorkspaceState {
       activeVersionId: my1.id,
       referencedVersionId: my1.id,
       versions: [my1],
+    },
+    {
+      id: 'file-005-a',
+      packageId: 'pkg-005',
+      name: '固化炉温循记录.pdf',
+      kind: 'technical',
+      activeVersionId: sg2.id,
+      referencedVersionId: sg2.id,
+      versions: [sg2],
+    },
+    {
+      id: 'file-006-a',
+      packageId: 'pkg-006',
+      name: '模具装配检验图册.pdf',
+      kind: 'drawing',
+      activeVersionId: sg3.id,
+      referencedVersionId: sg3.id,
+      versions: [sg3],
     },
   ]
 
@@ -325,11 +396,36 @@ export function createInitialState(): WorkspaceState {
   const findings = packages.flatMap((packageItem) =>
     validatePackage(packageItem, files, rules),
   )
+
+  const seedBatchPackageIds = ['pkg-001', 'pkg-005']
+  const seedBatch: LicenseBatch = {
+    id: 'batch-001',
+    code: 'LB-2026-001',
+    idempotencyKey: makeBatchIdempotencyKey(seedBatchPackageIds),
+    recipient: 'Asia Aero Manufacturing Pte. Ltd.',
+    destination: '新加坡',
+    endUse: '民用航空结构件试制',
+    items: seedBatchPackageIds.map((packageId, index) => ({
+      packageId,
+      ruleId: 'rule-sg-composite',
+      ruleName: '新加坡复合材料工艺资料许可规则',
+      amount: index === 0 ? 10 : 6,
+      deducted: false,
+    })),
+    totalReserved: 16,
+    status: 'reserved',
+    fingerprints: batchFingerprints(seedBatchPackageIds, packages, files),
+    createdBy: '周明',
+    createdAt: '2026-09-27T06:00:00.000Z',
+    updatedAt: '2026-09-27T06:00:00.000Z',
+  }
+
   return {
     packages,
     files,
     rules,
     findings,
+    batches: [seedBatch],
     comments: [
       {
         id: 'comment-1',

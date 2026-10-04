@@ -11,7 +11,9 @@ export function loadWorkspace(): WorkspaceState {
     return initial
   }
   try {
-    return JSON.parse(raw) as WorkspaceState
+    const parsed = JSON.parse(raw) as WorkspaceState
+    if (!Array.isArray(parsed.batches)) parsed.batches = []
+    return parsed
   } catch {
     const initial = createInitialState()
     saveWorkspace(initial)

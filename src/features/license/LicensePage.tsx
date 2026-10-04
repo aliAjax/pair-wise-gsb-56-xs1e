@@ -13,7 +13,7 @@ import {
 } from 'antd'
 import type { TableColumnsType } from 'antd'
 import { SafetyCertificateOutlined } from '@ant-design/icons'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { PageHeader } from '@/components/PageHeader'
 import {
   useDeductQuotaMutation,
@@ -22,9 +22,11 @@ import {
 } from '@/app/api'
 import type { LicenseRule } from '@/types/domain'
 import { approvalLevelLabels, findApplicableRule } from '@/services/rules'
+import { findActiveBatchForPackage } from '@/services/batch'
 
 export function LicensePage() {
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const { data, isLoading } = useGetWorkspaceQuery()
   const [validatePackage] = useValidatePackageMutation()
   const [deductQuota, deductState] = useDeductQuotaMutation()
@@ -44,6 +46,7 @@ export function LicensePage() {
   const packageFindings = data?.findings.filter((item) => item.packageId === selectedId) ?? []
   const hasHighFindings = packageFindings.some((item) => item.level === 'high')
   const remaining = selected ? selected.quotaLimit - selected.quotaUsed : 0
+  const activeBatch = data ? findActiveBatchForPackage(data.batches, selectedId) : undefined
 
   if (isLoading || !data) return <div className="panel">正在加载许可规则...</div>
 
@@ -237,13 +240,26 @@ export function LicensePage() {
                   selected.status !== 'approved' ||
                   hasHighFindings ||
                   amount > remaining ||
-                  remaining <= 0
+                  remaining <= 0 ||
+                  Boolean(activeBatch)
                 }
                 loading={deductState.isLoading}
                 onClick={deduct}
               >
                 确认扣减并完成许可
               </Button>
+              {activeBatch ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  message={`该资料包已加入联合许可批次 ${activeBatch.code}，须按批次统一核销，不能单独扣减拆散出口批次。`}
+                  action={
+                    <Button size="small" onClick={() => navigate('/license-batches')}>
+                      前往批次
+                    </Button>
+                  }
+                />
+              ) : null}
               {selected.status !== 'approved' ? (
                 <Alert type="warning" showIcon message="只有全部审批步骤完成后才允许扣减额度。" />
               ) : null}

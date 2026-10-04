@@ -136,6 +136,35 @@ export interface AuditEntry {
   createdAt: string
 }
 
+export type LicenseBatchStatus = 'reserved' | 'pending-review' | 'licensed'
+
+export interface LicenseBatchItem {
+  packageId: string
+  ruleId: string
+  ruleName: string
+  amount: number
+  deducted: boolean
+  deductedAt?: string
+}
+
+export interface LicenseBatch {
+  id: string
+  code: string
+  idempotencyKey: string
+  recipient: string
+  destination: string
+  endUse: string
+  items: LicenseBatchItem[]
+  totalReserved: number
+  status: LicenseBatchStatus
+  fingerprints: Record<string, string>
+  invalidReason?: string
+  lastDeductError?: string
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface WorkspaceState {
   packages: MaterialPackage[]
   files: MaterialFile[]
@@ -143,6 +172,7 @@ export interface WorkspaceState {
   findings: ValidationFinding[]
   comments: ReviewComment[]
   audit: AuditEntry[]
+  batches: LicenseBatch[]
 }
 
 export interface VersionDiff {
