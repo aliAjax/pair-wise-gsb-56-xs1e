@@ -116,6 +116,8 @@ const sw1 = version('V2.0', 5, true, '7EA2-319F', '标准控制器软件包')
 const sw2 = version('V2.1', 6, true, '52CC-8D10', '修复通信模块并更新校验文件')
 const us1 = version('V3.2', 12, false, 'E11A-77B4', '光刻设备参数说明', { controlled: true })
 const my1 = version('V1.0', 4, false, '88AB-3411', '厂房布置示意')
+const fw1 = version('V1.4', 6, true, 'C3D0-52BE', '运动控制固件包')
+const dg1 = version('V1.1', 5, true, '9F4A-27E0', '控制器诊断软件包')
 
 export function createInitialState(): WorkspaceState {
   const now = '2026-09-28T06:00:00.000Z'
@@ -222,6 +224,60 @@ export function createInitialState(): WorkspaceState {
       updatedAt: now,
       versions: [],
     },
+    {
+      id: 'pkg-005',
+      code: 'EC-2026-005',
+      title: '运动控制固件包',
+      category: 'software',
+      applicant: '赵敏',
+      recipient: 'Rhein Automation GmbH',
+      destination: '德国',
+      endUse: '民用生产线控制器维护',
+      technologyTags: ['工业控制'],
+      personnelScopes: [],
+      declarations: ['最终用户声明', '软件用途声明'],
+      status: 'approved',
+      matchedRuleId: 'rule-de-software',
+      approvalRoute: createApprovalRoute('standard').map((step) => ({
+        ...step,
+        status: 'approved',
+        comment: '固件用途与既有控制器软件一致。',
+        decidedAt: '2026-09-27T09:10:00.000Z',
+      })),
+      currentRound: 1,
+      quotaUsed: 12,
+      quotaLimit: 120,
+      createdAt: '2026-09-22T03:40:00.000Z',
+      updatedAt: '2026-09-27T09:10:00.000Z',
+      versions: [],
+    },
+    {
+      id: 'pkg-006',
+      code: 'EC-2026-006',
+      title: '控制器诊断软件包',
+      category: 'software',
+      applicant: '赵敏',
+      recipient: 'Rhein Automation GmbH',
+      destination: '德国',
+      endUse: '民用生产线控制器维护',
+      technologyTags: ['工业控制', '加密算法'],
+      personnelScopes: [],
+      declarations: ['最终用户声明', '软件用途声明'],
+      status: 'approved',
+      matchedRuleId: 'rule-de-software',
+      approvalRoute: createApprovalRoute('standard').map((step) => ({
+        ...step,
+        status: 'approved',
+        comment: '诊断工具不新增受控参数。',
+        decidedAt: '2026-09-28T01:30:00.000Z',
+      })),
+      currentRound: 1,
+      quotaUsed: 6,
+      quotaLimit: 120,
+      createdAt: '2026-09-25T06:20:00.000Z',
+      updatedAt: '2026-09-28T01:30:00.000Z',
+      versions: [],
+    },
   ]
 
   const files: MaterialFile[] = [
@@ -269,6 +325,24 @@ export function createInitialState(): WorkspaceState {
       activeVersionId: my1.id,
       referencedVersionId: my1.id,
       versions: [my1],
+    },
+    {
+      id: 'file-005-a',
+      packageId: 'pkg-005',
+      name: 'motion-firmware.zip',
+      kind: 'software',
+      activeVersionId: fw1.id,
+      referencedVersionId: fw1.id,
+      versions: [fw1],
+    },
+    {
+      id: 'file-006-a',
+      packageId: 'pkg-006',
+      name: 'controller-diagnostics.zip',
+      kind: 'software',
+      activeVersionId: dg1.id,
+      referencedVersionId: dg1.id,
+      versions: [dg1],
     },
   ]
 
@@ -330,6 +404,7 @@ export function createInitialState(): WorkspaceState {
     files,
     rules,
     findings,
+    batches: [],
     comments: [
       {
         id: 'comment-1',

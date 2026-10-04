@@ -126,6 +126,43 @@ export interface ValidationFinding {
   ruleId?: string
 }
 
+export type BatchStatus = 'reserved' | 'pending-review' | 'settled'
+
+export interface BatchReservationItem {
+  packageId: string
+  packageCode: string
+  ruleId: string
+  ruleName: string
+  amount: number
+}
+
+export interface BatchDeduction {
+  packageId: string
+  packageCode: string
+  amount: number
+  deductedAt: string
+}
+
+export interface LicenseBatch {
+  id: string
+  code: string
+  idempotencyKey: string
+  recipient: string
+  destination: string
+  endUse: string
+  packageIds: string[]
+  reservations: BatchReservationItem[]
+  totalReserved: number
+  fingerprint: string
+  status: BatchStatus
+  statusReason: string
+  deductions: BatchDeduction[]
+  createdAt: string
+  updatedAt: string
+  createdBy: string
+  settledAt?: string
+}
+
 export interface AuditEntry {
   id: string
   packageId?: string
@@ -143,6 +180,7 @@ export interface WorkspaceState {
   findings: ValidationFinding[]
   comments: ReviewComment[]
   audit: AuditEntry[]
+  batches: LicenseBatch[]
 }
 
 export interface VersionDiff {

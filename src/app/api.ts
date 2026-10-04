@@ -1,6 +1,7 @@
 import { createApi } from '@reduxjs/toolkit/query/react'
 import type { BaseQueryFn } from '@reduxjs/toolkit/query/react'
 import type {
+  LicenseBatch,
   MaterialFile,
   MaterialPackage,
   PageReview,
@@ -9,6 +10,21 @@ import type {
 } from '@/types/domain'
 import { loadWorkspace, resetWorkspace, saveWorkspace } from '@/services/storage'
 import { createApprovalRoute, findApplicableRule, validatePackage } from '@/services/rules'
+import {
+  batchIdempotencyKey,
+  computeBatchFingerprint,
+  planBatchReservations,
+  refreshBatchStates,
+  ruleRemainingQuota,
+  validateBatchComposition,
+} from '@/services/batches'
+
+export interface BatchMutationResult {
+  state: WorkspaceState
+  batch: LicenseBatch
+  deduplicated: boolean
+  message?: string
+}
 
 type MockRequest = {
   url: string
@@ -28,9 +44,26 @@ const mockBaseQuery: BaseQueryFn<MockRequest, unknown, MockError> = async ({
   await wait()
   let state = loadWorkspace()
   const payload = (body ?? {}) as Record<string, unknown>
+  let result: unknown
   const audit = (entry: Omit<WorkspaceState['audit'][number], 'id' | 'createdAt'>) => {
     state.audit.unshift({ ...entry, id: `audit-${crypto.randomUUID()}`, createdAt: now() })
   }
+
+  // 失效扫描：成员资料包换版或内容变化时，整批预占立即失效转待核。
+  // 请求处理前后各执行一次，保证变更类请求的响应本身即反映失效结果。
+  const scanBatches = () => {
+    const invalidated = refreshBatchStates(state)
+    invalidated.forEach((batch) =>
+      audit({
+        action: '批次预占失效',
+        target: batch.code,
+        operator: '系统',
+        detail: batch.statusReason,
+      }),
+    )
+    return invalidated.length > 0
+  }
+  if (scanBatches()) saveWorkspace(state)
 
   try {
     if (url === '/workspace') return { data: state }
@@ -268,6 +301,176 @@ const mockBaseQuery: BaseQueryFn<MockRequest, unknown, MockError> = async ({
         operator: '当前用户',
         detail: `扣减 ${amount}，剩余 ${packageItem.quotaLimit - packageItem.quotaUsed}。`,
       })
+    } else if (url === '/batch/create') {
+      const packageIds = (payload.packageIds as string[]).map(String)
+      const amounts = (payload.amounts ?? {}) as Record<string, number>
+      const members = packageIds.map((id) => state.packages.find((item) => item.id === id))
+      if (members.some((item) => !item)) throw new Error('存在无效的资料包选择')
+      const memberList = members as MaterialPackage[]
+      const key = batchIdempotencyKey(packageIds)
+      const existing = state.batches.find((batch) => batch.idempotencyKey === key)
+      if (existing) {
+        // 两个窗口同时提交同一批次：只成功一次，失败方读取现有批次。
+        audit({
+          action: '重复提交拦截',
+          target: existing.code,
+          operator: '当前用户',
+          detail: '同一批次已在其他窗口提交，本次读取现有批次，未重复建批。',
+        })
+        result = { state, batch: existing, deduplicated: true }
+      } else {
+        const problems = validateBatchComposition(memberList, state.rules)
+        if (problems.length) throw new Error(problems.join('；'))
+        const plan = planBatchReservations(
+          memberList,
+          state.rules,
+          amounts,
+          state.packages,
+          state.batches,
+        )
+        if (plan.problems.length) throw new Error(plan.problems.join('；'))
+        const batch: LicenseBatch = {
+          id: `batch-${crypto.randomUUID()}`,
+          code: `LB-2026-${String(state.batches.length + 1).padStart(3, '0')}`,
+          idempotencyKey: key,
+          recipient: memberList[0].recipient,
+          destination: memberList[0].destination,
+          endUse: memberList[0].endUse,
+          packageIds: memberList.map((item) => item.id),
+          reservations: plan.items,
+          totalReserved: plan.items.reduce((sum, item) => sum + item.amount, 0),
+          fingerprint: computeBatchFingerprint(memberList, state.files),
+          status: 'reserved',
+          statusReason: '',
+          deductions: [],
+          createdAt: now(),
+          updatedAt: now(),
+          createdBy: '当前用户',
+        }
+        state.batches.unshift(batch)
+        audit({
+          action: '创建联合许可批次',
+          target: batch.code,
+          operator: '当前用户',
+          detail: `合并 ${batch.packageIds.length} 份资料包，按规则预占总额度 ${batch.totalReserved}。`,
+        })
+        result = { state, batch, deduplicated: false }
+      }
+    } else if (url === '/batch/settle') {
+      const batch = state.batches.find((item) => item.id === String(payload.batchId))
+      if (!batch) throw new Error('许可批次不存在')
+      if (batch.status === 'settled') {
+        // 重复核销不重复扣。
+        result = { state, batch, deduplicated: true, message: '批次已核销，本次未重复扣减。' }
+      } else if (batch.status === 'pending-review') {
+        throw new Error('批次预占已失效并转待核，请重新校验预占后再核销。')
+      } else {
+        const problems: string[] = []
+        batch.reservations.forEach((item) => {
+          const packageItem = state.packages.find((entry) => entry.id === item.packageId)
+          if (!packageItem) {
+            problems.push(`${item.packageCode} 已不存在。`)
+            return
+          }
+          if (batch.deductions.some((entry) => entry.packageId === item.packageId)) return
+          if (packageItem.status !== 'approved' && packageItem.status !== 'licensed') {
+            problems.push(`${packageItem.code} 审批未完成，不能核销扣减。`)
+          }
+          if (packageItem.quotaUsed + item.amount > packageItem.quotaLimit) {
+            problems.push(
+              `${packageItem.code} 剩余额度 ${packageItem.quotaLimit - packageItem.quotaUsed}，不足以扣减 ${item.amount}。`,
+            )
+          }
+        })
+        const ruleDemand = new Map<string, number>()
+        batch.reservations.forEach((item) => {
+          ruleDemand.set(item.ruleId, (ruleDemand.get(item.ruleId) ?? 0) + item.amount)
+        })
+        ruleDemand.forEach((demand, ruleId) => {
+          const rule = state.rules.find((item) => item.id === ruleId)
+          if (!rule) return
+          const remaining = ruleRemainingQuota(rule, state.packages, state.batches, batch.id)
+          if (demand > remaining) {
+            problems.push(`规则「${rule.name}」剩余可用额度 ${remaining}，不足以整批扣减 ${demand}。`)
+          }
+        })
+        if (problems.length) {
+          // 扣减失败：整批预占保留，记录失败原因后可重试。
+          audit({
+            action: '批次核销失败',
+            target: batch.code,
+            operator: '当前用户',
+            detail: `${problems.join('；')} 整批预占保留，可修复后重试。`,
+          })
+          saveWorkspace(state)
+          throw new Error(`${problems.join('；')}。整批预占保留，可重试。`)
+        }
+        batch.reservations.forEach((item) => {
+          if (batch.deductions.some((entry) => entry.packageId === item.packageId)) return
+          const packageItem = state.packages.find((entry) => entry.id === item.packageId)
+          if (!packageItem) return
+          packageItem.quotaUsed += item.amount
+          packageItem.status = 'licensed'
+          packageItem.updatedAt = now()
+          batch.deductions.push({
+            packageId: packageItem.id,
+            packageCode: packageItem.code,
+            amount: item.amount,
+            deductedAt: now(),
+          })
+        })
+        batch.status = 'settled'
+        batch.settledAt = now()
+        batch.updatedAt = now()
+        batch.statusReason = ''
+        audit({
+          action: '核销联合许可批次',
+          target: batch.code,
+          operator: '当前用户',
+          detail: `核销 ${batch.deductions.length} 份资料包，共扣减 ${batch.totalReserved} 额度。`,
+        })
+        result = { state, batch, deduplicated: false }
+      }
+    } else if (url === '/batch/recheck') {
+      const batch = state.batches.find((item) => item.id === String(payload.batchId))
+      if (!batch) throw new Error('许可批次不存在')
+      if (batch.status === 'settled') throw new Error('批次已核销，无需重新校验。')
+      const members = batch.packageIds.map((id) => state.packages.find((item) => item.id === id))
+      if (members.some((item) => !item)) throw new Error('批次成员资料包已不存在，无法重新校验。')
+      const memberList = members as MaterialPackage[]
+      const problems = validateBatchComposition(memberList, state.rules)
+      const amounts = Object.fromEntries(
+        batch.reservations.map((item) => [item.packageId, item.amount]),
+      )
+      const plan = planBatchReservations(
+        memberList,
+        state.rules,
+        amounts,
+        state.packages,
+        state.batches,
+        batch.id,
+      )
+      problems.push(...plan.problems)
+      if (problems.length) {
+        batch.status = 'pending-review'
+        batch.statusReason = problems.join('；')
+        batch.updatedAt = now()
+        saveWorkspace(state)
+        throw new Error(problems.join('；'))
+      }
+      batch.reservations = plan.items
+      batch.totalReserved = plan.items.reduce((sum, item) => sum + item.amount, 0)
+      batch.fingerprint = computeBatchFingerprint(memberList, state.files)
+      batch.status = 'reserved'
+      batch.statusReason = ''
+      batch.updatedAt = now()
+      audit({
+        action: '重新校验批次预占',
+        target: batch.code,
+        operator: '当前用户',
+        detail: `校验通过，整批预占恢复生效，预占总额度 ${batch.totalReserved}。`,
+      })
+      result = { state, batch, deduplicated: false }
     } else if (url === '/comment/add') {
       state.comments.unshift({
         ...(payload.comment as Omit<ReviewComment, 'id' | 'createdAt'>),
@@ -283,8 +486,9 @@ const mockBaseQuery: BaseQueryFn<MockRequest, unknown, MockError> = async ({
       throw new Error(`未实现的本地接口：${url}`)
     }
 
+    scanBatches()
     saveWorkspace(state)
-    return { data: state }
+    return { data: result ?? state }
   } catch (error) {
     return {
       error: {
@@ -374,6 +578,21 @@ export const workspaceApi = createApi({
       query: (body) => ({ url: '/license/deduct', method: 'POST', body }),
       invalidatesTags: ['Workspace'],
     }),
+    createBatch: builder.mutation<
+      BatchMutationResult,
+      { packageIds: string[]; amounts: Record<string, number> }
+    >({
+      query: (body) => ({ url: '/batch/create', method: 'POST', body }),
+      invalidatesTags: ['Workspace'],
+    }),
+    settleBatch: builder.mutation<BatchMutationResult, { batchId: string }>({
+      query: (body) => ({ url: '/batch/settle', method: 'POST', body }),
+      invalidatesTags: ['Workspace'],
+    }),
+    recheckBatch: builder.mutation<BatchMutationResult, { batchId: string }>({
+      query: (body) => ({ url: '/batch/recheck', method: 'POST', body }),
+      invalidatesTags: ['Workspace'],
+    }),
     addComment: builder.mutation<
       WorkspaceState,
       { comment: Omit<ReviewComment, 'id' | 'createdAt'> }
@@ -408,6 +627,9 @@ export const {
   useSubmitApprovalMutation,
   useDecideApprovalMutation,
   useDeductQuotaMutation,
+  useCreateBatchMutation,
+  useSettleBatchMutation,
+  useRecheckBatchMutation,
   useAddCommentMutation,
   useAddAuditMutation,
   useResetWorkspaceMutation,
